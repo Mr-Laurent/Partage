@@ -1,0 +1,96 @@
+object.data <- Read10X(data.dir =paste("/LAB-DATA/BiRD/shares/CRTI/epigenetics/210322_NovaSeq/FlowCellB/PrimaryAnalysis/Victor/DL007_m4_p1/DL007_m4_pool1/outs/filtered_feature_bc_matrix",sep=""))
+
+
+# pdf(file=paste("seur1_",runam,".pdf",sep=""),width=9, height=8)
+object.data <- Read10X(data.dir =paste("./../",path,"/filtered_feature_bc_matrix",sep=""))
+object <- CreateSeuratObject(counts = object.data[["Gene Expression"]], min.cells = 3, min.features = 200)
+ADTs <- object.data$'Antibody Capture'@Dimnames[[1]][4:7]
+ADT <- object.data$'Antibody Capture'[ADTs, ]
+HTOs <- object.data$'Antibody Capture'@Dimnames[[1]][1:3]
+HTO <- Matrix(object.data$'Antibody Capture'[HTOs, ], sparse = T, nrow = 1, byrow = F, dimnames = list(HTOs, colnames(ADT)))
+object[["ADT"]] <- CreateAssayObject(counts = ADT[, colnames(x = object)])
+object[["HTO"]] <- CreateAssayObject(counts = HTO[, colnames(x = object)])
+
+object
+# 18326 features across 11643 samples within 3 assays
+
+#Filter cells with % mitochondrial genes > 5%
+object[["percent.mt"]] <- PercentageFeatureSet(object, pattern = "^MT-")
+VlnPlot(object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size=0.1)
+object <- subset(object, subset = percent.mt < 10)
+VlnPlot(object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3,pt.size=0.1)
+
+
+
+
+# Normalize by Centred log ratio transformation
+object <- NormalizeData(object, assay = "HTO", normalization.method = "CLR")
+object<-MULTIseqDemux(object, assay = "HTO",autoThresh = T, maxiter = 5, qrange = seq(from = 0.1, to = 0.9, by = 0.05), verbose = TRUE)
+object[["HTO_classification"]]<-object@meta.data$MULTI_classification
+table(object@meta.data$MULTI_ID)
+
+classi<-c()
+for(i in 1:length(object@meta.data$MULTI_ID)){
+  if (object@meta.data$MULTI_ID[i]=="HTO1-TotalSeqB"|object@meta.data$MULTI_ID[i]=="HTO2-TotalSeqB"|object@meta.data$MULTI_ID[i]=="HTO3-TotalSeqB"){
+    classi<-append(classi,"Singlet")
+  } else if (object@meta.data$MULTI_ID[i]=="Doublet"){
+    classi<-append(classi,"Doublet")
+  } else if (object@meta.data$MULTI_ID[i]=="Negative"){
+    classi<-append(classi,"Negative")
+  }
+}
+object[["HTO_classification.global"]]<-classi
+
+# Plot the classification
+plo<-HTOHeatmap(object, assay = "HTO")
+plo + scale_fill_viridis(name="Temperature")
+#Keep only singlet cells
+Idents(object)<-object@meta.data$HTO_classification.global
+VlnPlot(object, features = "nCount_RNA", pt.size = 0.1, log = TRUE)
+
+
+#   hto.dist.mtx <- as.matrix(dist(t(GetAssayData(object = object, assay = "HTO"))))
+#   pbmc.hashtag.subset <- RunTSNE(object, distance.matrix = hto.dist.mtx, perplexity = 100)
+#   DimPlot(pbmc.hashtag.subset)
+
+
+# Remove high read-count cells :
+object <- subset(object, subset =nCount_RNA < (2*median(object@meta.data$nCount_RNA)) )
+# & nFeature_RNA < (2*median(object@meta.data$nFeature_RNA))      If number of reads and nbr of features are linked, it should be useless
+# 9831 cells
+
+# Only keep HTO singlets :
+object <- subset(object, idents = "Singlet")
+# 9233 cells
+
+
+
+object <- NormalizeData(object, assay = "ADT", normalization.method = "CLR", margin=2)
+
+
+object<- NormalizeData(object)
+object <- FindVariableFeatures(object, selection.method = "vst", nfeatures = 2000)
+head(VariableFeatures(object), 10)
+all.genes <- rownames(object)
+object <- ScaleData(object, features = all.genes)
+
+object <- RunPCA(object, features = VariableFeatures(object = object))
+VizDimLoadings(object, dims = 1:2, reduction = "pca")
+DimPlot(object, reduction = "pca")
+ElbowPlot(object)
+# Compute the number of PC to use (either explaining 95% variation or when 2 following PC have less than 0.1% difference of variation
+elpt <-object[["pca"]]@stdev / sum(object[["pca"]]@stdev)*100
+cumul <- cumsum(elpt)
+co1 <- which(cumul > 90 & elpt < 5)[1]
+co2 <- sort(which((elpt[1:length(elpt) - 1] - elpt[2:length(elpt)]) > 0.1), decreasing = T)[1] + 1
+pcs <- min(co1, co2)
+if(pcs<10){pcs<-10}
+object <- FindNeighbors(object, dims = 1:pcs)
+object<- RunUMAP(object, dims = 1:pcs, umap.method= "umap-learn")
+DimPlot(object,reduction = "umap")
+DefaultAssay(object)<-"ADT"
+FeaturePlot(object, features = rownames(object[["ADT"]]), min.cutoff = "q05", max.cutoff = "q95", ncol = 2,sort=T)
+FeaturePlot(object, features = rownames(object[["HTO"]]), min.cutoff = "q05", max.cutoff = "q95", ncol = 2)
+
+
+saveRDS(object, "CD8batch2_goodADT.rds")
