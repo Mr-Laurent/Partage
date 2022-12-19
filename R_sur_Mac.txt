@@ -1,0 +1,12 @@
+
+Pour changer de version R si il y en a plusieurs installées :
+
+aller sur Finder > Terminal 
+puis marquer :
+  ln -sfn 3.5 /Library/Frameworks/R.framework/Versions/Current
+
+Pour changer par ex. en version 3.5 : 
+  ln -sfn 3.5 /Library/Frameworks/R.framework/Versions/Current
+  
+  
+ 
